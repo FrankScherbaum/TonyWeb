@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Volume2, VolumeX, Music, Mic, Activity, Waves, Eye, EyeOff, Gauge } from 'lucide-react';
-import { MixerState } from '../types';
+import { MixerState, AudioSource } from '../types';
 
 interface MixerProps {
   mixerState: MixerState;
@@ -15,6 +15,14 @@ interface MixerProps {
   onUpdate: (updates: Partial<MixerState>) => void;
   playbackSpeed: number;
   onPlaybackSpeedChange: (speed: number) => void;
+  freqRange?: [number, number];
+  onFreqRangeChange?: (r: [number, number]) => void;
+  // Optional second recording (headset mic) for listening
+  textAudioName?: string | null;
+  audioSource?: AudioSource;
+  onAudioSourceChange?: (s: AudioSource) => void;
+  textAudioOffset?: number;
+  onTextAudioOffsetChange?: (o: number) => void;
 }
 
 const Mixer: React.FC<MixerProps> = ({ 
@@ -24,9 +32,27 @@ const Mixer: React.FC<MixerProps> = ({
   showNotes, onToggleNotes,
   onUpdate,
   playbackSpeed,
-  onPlaybackSpeedChange
+  onPlaybackSpeedChange,
+  freqRange = [50, 5000],
+  onFreqRangeChange,
+  textAudioName = null,
+  audioSource = 'main',
+  onAudioSourceChange,
+  textAudioOffset = 0,
+  onTextAudioOffsetChange
 }) => {
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+  const [minDraft, setMinDraft] = useState(String(freqRange[0]));
+  const [maxDraft, setMaxDraft] = useState(String(freqRange[1]));
+  useEffect(() => { setMinDraft(String(freqRange[0])); setMaxDraft(String(freqRange[1])); }, [freqRange[0], freqRange[1]]);
+  const commitRange = () => {
+    let lo = parseFloat(minDraft), hi = parseFloat(maxDraft);
+    if (isNaN(lo) || isNaN(hi)) { setMinDraft(String(freqRange[0])); setMaxDraft(String(freqRange[1])); return; }
+    lo = Math.max(20, Math.min(lo, 10000));
+    hi = Math.min(20000, Math.max(hi, lo * 1.5)); // at least ~7 semitones visible
+    setMinDraft(String(Math.round(lo))); setMaxDraft(String(Math.round(hi)));
+    if (Math.round(lo) !== freqRange[0] || Math.round(hi) !== freqRange[1]) onFreqRangeChange?.([Math.round(lo), Math.round(hi)]);
+  };
   const speedMenuRef = useRef<HTMLDivElement>(null);
 
   // Close speed menu when clicking outside
@@ -137,6 +163,33 @@ const Mixer: React.FC<MixerProps> = ({
 
       <div className="w-px h-8 bg-gray-300 mx-2"></div>
 
+      {textAudioName && onAudioSourceChange && (
+        <>
+          <div className="flex items-center gap-2 text-xs" title={`Headset recording: ${textAudioName}`}>
+            <div className="flex rounded-md overflow-hidden border border-gray-300 shadow-sm">
+              <button
+                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onAudioSourceChange('main'); }}
+                className={`px-2 py-1.5 ${audioSource === 'main' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+              >Main</button>
+              <button
+                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onAudioSourceChange('text'); }}
+                className={`px-2 py-1.5 border-l border-gray-300 ${audioSource === 'text' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+              >Headset</button>
+            </div>
+            <label className="flex items-center gap-1 text-gray-600" title="Time offset of the headset recording (seconds). Positive: headset recording is later than the main one.">
+              Offset
+              <input
+                type="number" step="0.01"
+                className="w-16 border rounded px-1 py-0.5 text-right font-mono"
+                value={textAudioOffset}
+                onChange={(e) => { const v = parseFloat(e.target.value); onTextAudioOffsetChange?.(isNaN(v) ? 0 : v); }}
+              />s
+            </label>
+          </div>
+          <div className="w-px h-8 bg-gray-300 mx-2"></div>
+        </>
+      )}
+
       <ChannelStrip 
         enabled={mixerState.originalEnabled} 
         volume={mixerState.originalVolume}
@@ -183,6 +236,37 @@ const Mixer: React.FC<MixerProps> = ({
         <Waves size={18} />
         <span>Spectrogram</span>
       </button>
+
+      {onFreqRangeChange && (
+        <div className="flex items-center gap-1 text-xs text-gray-600" title="Visible range of the logarithmic frequency axis (Hz)">
+          <span>Range</span>
+          <input
+            type="number" min={20} max={20000} step={10}
+            className="w-16 border border-gray-300 rounded px-1 py-1 text-right font-mono bg-white"
+            value={minDraft}
+            onChange={(e) => setMinDraft(e.target.value)}
+            onBlur={commitRange}
+            onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+            title="Lowest frequency shown (Hz)"
+          />
+          <span>–</span>
+          <input
+            type="number" min={40} max={20000} step={50}
+            className="w-16 border border-gray-300 rounded px-1 py-1 text-right font-mono bg-white"
+            value={maxDraft}
+            onChange={(e) => setMaxDraft(e.target.value)}
+            onBlur={commitRange}
+            onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+            title="Highest frequency shown (Hz)"
+          />
+          <span>Hz</span>
+          <button
+            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onFreqRangeChange([50, 5000]); }}
+            className="px-1.5 py-1 border border-gray-300 rounded bg-white hover:bg-gray-50"
+            title="Reset to 50–5000 Hz"
+          >↺</button>
+        </div>
+      )}
     </div>
   );
 };

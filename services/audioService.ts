@@ -10,6 +10,10 @@ export class AudioService {
   private playbackRate: number = 1.0;
   private isPlaying: boolean = false;
   private pauseTime: number = 0; // For returning time when stopped
+  // Optional alternative recording (e.g. headset mic) used for the 'Audio' channel
+  private altBuffer: AudioBuffer | null = null;
+  private altOffset: number = 0; // seconds: altTime = mainTime + altOffset
+  private useAlt: boolean = false;
 
   // Mixer Nodes
   private masterGain: GainNode;
@@ -119,6 +123,12 @@ export class AudioService {
     return await this.context.decodeAudioData(arrayBuffer);
   }
 
+  setAlternateAudio(buffer: AudioBuffer | null, offset: number, use: boolean) {
+    this.altBuffer = buffer;
+    this.altOffset = offset;
+    this.useAlt = use && !!buffer;
+  }
+
   play(
       buffer: AudioBuffer, 
       pitchData: PitchFrame[], 
@@ -143,7 +153,8 @@ export class AudioService {
     
     // STRICT ORDERING: 
     // 1. Assign Buffer
-    this.source.buffer = buffer;
+    const useAlt = this.useAlt && !!this.altBuffer;
+    this.source.buffer = useAlt ? this.altBuffer : buffer;
 
     // 2. Enable Pitch Preservation (Time Stretching)
     // We explicitly set this property before touching playbackRate
@@ -158,10 +169,19 @@ export class AudioService {
     this.source.connect(this.originalGain);
     
     // source.start takes (when, offset, duration)
-    if (duration !== undefined) {
-      this.source.start(0, startOffset, duration);
+    let srcOffset = startOffset + (useAlt ? this.altOffset : 0);
+    let srcDuration = duration;
+    let when = 0;
+    if (srcOffset < 0) {
+      // alternative recording starts later than main: delay the start
+      when = this.context.currentTime + (-srcOffset) / playbackRate;
+      if (srcDuration !== undefined) srcDuration = Math.max(0, srcDuration + srcOffset);
+      srcOffset = 0;
+    }
+    if (srcDuration !== undefined) {
+      this.source.start(when, srcOffset, srcDuration);
     } else {
-      this.source.start(0, startOffset);
+      this.source.start(when, srcOffset);
     }
 
     // 2. Setup Pitch Synthesizer (Continuous)

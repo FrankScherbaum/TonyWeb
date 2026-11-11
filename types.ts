@@ -18,6 +18,7 @@ export interface Note {
   end: number;
   pitch: number; // Frequency in Hz
   state?: 'selected' | 'default'; // For future editing
+  text?: string; // Lyrics / syllable text for this note
 }
 
 export interface AudioState {
@@ -56,9 +57,12 @@ export interface MixerState {
   notesVolume: number;
 }
 
+export type AudioSource = 'main' | 'text';
+
 export interface SpectrogramData {
   width: number;
   height: number;
   magnitude2d: Float32Array[]; // Array of arrays for easier access, or flat buffer
   maxMagnitude: number;
+  sampleRate?: number; // needed to map bins to Hz
 }

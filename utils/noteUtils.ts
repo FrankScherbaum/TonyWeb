@@ -49,17 +49,35 @@ export const splitNote = (
         ...note,
         id: crypto.randomUUID(),
         end: splitTime,
-        pitch: leftPitch
+        pitch: leftPitch,
+        text: note.text
     };
 
     const rightNote: Note = {
         ...note,
         id: crypto.randomUUID(),
         start: splitTime,
-        pitch: rightPitch
+        pitch: rightPitch,
+        text: undefined
     };
 
     return [leftNote, rightNote];
+};
+
+// Merge a group of notes (any gaps between them are filled) into one note.
+// Pitch = median of the pitch track over the new extent; text = first non-empty text.
+export const mergeNotes = (group: Note[], pitchData: PitchFrame[]): Note => {
+    const sorted = [...group].sort((a, b) => a.start - b.start);
+    const start = sorted[0].start;
+    const end = Math.max(...sorted.map(n => n.end));
+    let pitch = calculateMedianPitch(pitchData.filter(f => f.timestamp >= start && f.timestamp <= end));
+    if (!(pitch > 0)) {
+        let w = 0, acc = 0;
+        sorted.forEach(n => { const d = n.end - n.start; w += d; acc += d * n.pitch; });
+        pitch = w > 0 ? acc / w : sorted[0].pitch;
+    }
+    const text = sorted.find(n => n.text)?.text;
+    return { id: crypto.randomUUID(), start, end, pitch, state: 'default', ...(text ? { text } : {}) };
 };
 
 // Handle smart resizing (pushing neighbors)
@@ -136,4 +154,45 @@ export const getNoteContextRange = (note: Note, paddingSeconds: number): [number
     let end = note.end + paddingSeconds;
     
     return [Math.max(0, start), end];
+};
+
+
+// Carry note texts over to a freshly segmented set of notes (largest time overlap wins).
+export const inheritNoteTexts = (oldNotes: Note[], newNotes: Note[]): Note[] => {
+    const withText = oldNotes.filter(n => n.text && n.text.length > 0);
+    if (withText.length === 0) return newNotes;
+    const used = new Set<string>();
+    return newNotes.map(nn => {
+        let best: Note | null = null;
+        let bestOv = 0;
+        for (const o of withText) {
+            if (used.has(o.id)) continue;
+            const ov = Math.min(nn.end, o.end) - Math.max(nn.start, o.start);
+            if (ov > bestOv) { bestOv = ov; best = o; }
+        }
+        if (best && bestOv > 0.5 * Math.min(nn.end - nn.start, best.end - best.start)) {
+            used.add(best.id);
+            return { ...nn, text: best.text };
+        }
+        return nn;
+    });
+};
+
+// Close gaps between neighbouring notes inside a time range: the end of the earlier and the
+// start of the later note both move to the middle of the gap. Only gaps up to maxGap (s) are
+// closed; only notes whose midpoint lies in [range[0], range[1]] are considered.
+export const closeNoteGaps = (notes: Note[], range: [number, number], maxGap: number): Note[] => {
+  const sorted = [...notes].sort((a, b) => a.start - b.start).map(n => ({ ...n }));
+  const inRange = (n: Note) => (n.start + n.end) / 2 >= range[0] && (n.start + n.end) / 2 <= range[1];
+  for (let i = 1; i < sorted.length; i++) {
+    const a = sorted[i - 1], b = sorted[i];
+    if (!inRange(a) || !inRange(b)) continue;
+    const gap = b.start - a.end;
+    if (gap > 1e-9 && gap <= maxGap) {
+      const mid = (a.end + b.start) / 2;
+      a.end = mid;
+      b.start = mid;
+    }
+  }
+  return sorted;
 };

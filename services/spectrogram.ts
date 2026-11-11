@@ -70,7 +70,8 @@ export const generateSpectrogram = async (
         width: numFrames,
         height: bins,
         magnitude2d: magnitudes,
-        maxMagnitude: maxMag
+        maxMagnitude: maxMag,
+        sampleRate: sampleRate
       };
     }
 

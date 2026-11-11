@@ -2,11 +2,18 @@
 import { PitchFrame, Note, SpectrogramData } from '../types';
 import { COLORS, DIMENSIONS, ANALYSIS } from '../constants';
 
-// Coordinate helpers
+// Visible frequency range of the (logarithmic) vertical axis
+let viewMinHz: number = ANALYSIS.minPitch;
+let viewMaxHz: number = ANALYSIS.maxPitch;
+export const setFreqViewRange = (minHz: number, maxHz: number) => {
+    if (minHz > 0 && maxHz > minHz) { viewMinHz = minHz; viewMaxHz = maxHz; }
+};
+
+// Coordinate helpers (y is logarithmic in frequency)
 export const freqToY = (f: number, containerHeight: number) => {
     const logF = Math.log(f);
-    const logMin = Math.log(ANALYSIS.minPitch);
-    const logMax = Math.log(ANALYSIS.maxPitch);
+    const logMin = Math.log(viewMinHz);
+    const logMax = Math.log(viewMaxHz);
     const normalized = (logF - logMin) / (logMax - logMin);
     const availableHeight = containerHeight - DIMENSIONS.rulerHeight;
     return (containerHeight) - (normalized * availableHeight);
@@ -15,8 +22,8 @@ export const freqToY = (f: number, containerHeight: number) => {
 export const yToFreq = (y: number, containerHeight: number) => {
      const availableHeight = containerHeight - DIMENSIONS.rulerHeight;
      const normalized = (containerHeight - y) / availableHeight;
-     const logMin = Math.log(ANALYSIS.minPitch);
-     const logMax = Math.log(ANALYSIS.maxPitch);
+     const logMin = Math.log(viewMinHz);
+     const logMax = Math.log(viewMaxHz);
      const logF = normalized * (logMax - logMin) + logMin;
      return Math.exp(logF);
 };
@@ -84,7 +91,7 @@ export const drawSpectrogram = (
     for(let y = 0; y < imgHeight; y++) {
          const canvasY = y + DIMENSIONS.rulerHeight;
          const freq = yToFreq(canvasY, containerHeight);
-         const nyquist = 22050; // Approx
+         const nyquist = (spectrogramData.sampleRate ?? 44100) / 2;
          const bin = (freq / nyquist) * specHeight;
          binMap[y] = bin;
     }
@@ -129,7 +136,9 @@ export const drawSpectrogram = (
              }
          }
     }
-    ctx.putImageData(imageData, viewStartTime * zoom, DIMENSIONS.rulerHeight);
+    // putImageData ignores the context transform: the canvas covers only the visible part,
+    // so the spectrogram image goes to the left edge of the canvas
+    ctx.putImageData(imageData, 0, DIMENSIONS.rulerHeight);
 };
 
 export const drawGrid = (
@@ -147,15 +156,51 @@ export const drawGrid = (
     ctx.lineWidth = 1;
     ctx.font = '10px monospace';
     ctx.textBaseline = 'middle';
-    [55, 110, 220, 440, 880, 1760, 3520].forEach(f => {
+    // Semitone grid (equal temperament, A4 = 440 Hz) – only when lines are far enough apart
+    {
+        const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        const pxPerSemitone = Math.abs(freqToY(440 * Math.pow(2, 1 / 12), containerHeight) - freqToY(440, containerHeight));
+        if (pxPerSemitone >= 7) {
+            const mLo = Math.ceil(69 + 12 * Math.log2(viewMinHz / 440));
+            const mHi = Math.floor(69 + 12 * Math.log2(viewMaxHz / 440));
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            for (let m = mLo; m <= mHi; m++) {
+                const f = 440 * Math.pow(2, (m - 69) / 12);
+                const y = freqToY(f, containerHeight);
+                if (y < DIMENSIONS.rulerHeight) continue;
+                const pc = ((m % 12) + 12) % 12;
+                const isC = pc === 0, isNatural = NAMES[pc].length === 1;
+                ctx.beginPath();
+                ctx.strokeStyle = isC ? '#cbd5e1' : (isNatural ? '#e5e7eb' : '#f1f5f9');
+                ctx.lineWidth = 1;
+                ctx.moveTo(visibleStartX, y);
+                ctx.lineTo(visibleEndX, y);
+                ctx.stroke();
+                if (isC || (pxPerSemitone >= 13 && isNatural) || pxPerSemitone >= 22) {
+                    ctx.fillStyle = COLORS.gridText;
+                    ctx.font = '10px monospace';
+                    ctx.fillText(`${NAMES[pc]}${Math.floor(m / 12) - 1}`, visibleStartX + 5, y - 5);
+                }
+            }
+        }
+    }
+    // Octave lines (A) with Hz labels
+    for (let f = 27.5; f <= 8000; f *= 2) {
+        if (f < viewMinHz * 0.999 || f > viewMaxHz * 1.001) continue;
         const y = freqToY(f, containerHeight);
         ctx.beginPath();
+        ctx.strokeStyle = '#9ca3af';
+        ctx.lineWidth = 1;
         ctx.moveTo(visibleStartX, y);
         ctx.lineTo(visibleEndX, y);
         ctx.stroke();
         ctx.fillStyle = COLORS.gridText;
-        ctx.fillText(`${f}Hz`, visibleStartX + 5, y - 6);
-    });
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${f}Hz`, visibleStartX + 40, y - 6);
+    }
 
     // Time Ruler
     ctx.fillStyle = COLORS.rulerBackground; 
@@ -230,6 +275,32 @@ export const drawNotes = (
         ctx.strokeStyle = isSelected ? COLORS.noteSelectedBorder : COLORS.noteDefaultBorder; 
         ctx.lineWidth = isSelected ? 2 : 1;
         ctx.strokeRect(x, visibleY, w, DIMENSIONS.noteHeight);
+
+        // Clear segment boundaries: dark vertical bars at start and end, reaching beyond the note bar
+        ctx.save();
+        ctx.strokeStyle = isSelected ? '#1e3a8a' : '#1e40af';
+        ctx.lineWidth = 2;
+        const bTop = visibleY - 5, bBot = visibleY + DIMENSIONS.noteHeight + 5;
+        ctx.beginPath();
+        ctx.moveTo(x, bTop); ctx.lineTo(x, bBot);
+        ctx.moveTo(x + w, bTop); ctx.lineTo(x + w, bBot);
+        ctx.stroke();
+        ctx.restore();
+
+        // Note text (syllable) above the note bar
+        if (note.text) {
+            ctx.save();
+            ctx.font = 'bold 14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            const ty = Math.max(DIMENSIONS.rulerHeight + 14, visibleY - 7);
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+            ctx.strokeText(note.text, x + w / 2, ty);
+            ctx.fillStyle = isSelected ? '#1d4ed8' : '#111827';
+            ctx.fillText(note.text, x + w / 2, ty);
+            ctx.restore();
+        }
     });
 };
 

@@ -6,6 +6,7 @@ interface KeyboardShortcutsProps {
   onDeleteNotes: () => void;
   onCreateNote: () => void;
   onSplitNote: () => void;
+  onMergeNotes?: () => void;
   onToggleCandidates: () => void;
   onSaveProject: () => void;
   onUndo: () => void;
@@ -20,6 +21,7 @@ export const useKeyboardShortcuts = ({
   onDeleteNotes,
   onCreateNote,
   onSplitNote,
+  onMergeNotes,
   onToggleCandidates,
   onSaveProject,
   onUndo,
@@ -55,6 +57,11 @@ export const useKeyboardShortcuts = ({
         if (e.key === '/') { 
             e.preventDefault(); 
             onSplitNote(); 
+            return; 
+        }
+        if (e.key === '-' && !e.metaKey && !e.ctrlKey && onMergeNotes) { 
+            e.preventDefault(); 
+            onMergeNotes(); 
             return; 
         }
 
@@ -112,6 +119,7 @@ export const useKeyboardShortcuts = ({
     onDeleteNotes, 
     onCreateNote, 
     onSplitNote, 
+    onMergeNotes, 
     onToggleCandidates, 
     onSaveProject, 
     onUndo, 

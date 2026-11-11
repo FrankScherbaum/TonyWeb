@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState, useLayoutEffect } from 'react';
 import { PitchFrame, Note, SpectrogramData } from '../types';
-import { drawSpectrogram, drawGrid, drawNotes, drawPitchCurve, drawCandidates, drawSelection, freqToY, yToFreq, hzToNoteName } from '../utils/renderUtils';
+import { setFreqViewRange, drawSpectrogram, drawGrid, drawNotes, drawPitchCurve, drawCandidates, drawSelection, freqToY, yToFreq, hzToNoteName } from '../utils/renderUtils';
 import { getSnappedTime, findNoteInteraction, InteractionMode } from '../utils/interactionUtils';
 import { DIMENSIONS, COLORS } from '../constants';
 
@@ -19,6 +19,9 @@ interface PitchVisualizerProps {
   viewStartTime: number;
   selectionRange: [number, number] | null;
   showCandidates: boolean;
+  freqRange?: [number, number];
+  textMode?: boolean;
+  onTextNoteClick?: (noteId: string) => void;
   frameDuration: number; // New prop for grid snapping
   onViewScroll: (startTime: number) => void;
   onSeek: (time: number) => void;
@@ -47,6 +50,9 @@ const PitchVisualizer: React.FC<PitchVisualizerProps> = ({
   viewStartTime,
   selectionRange,
   showCandidates,
+  freqRange = [50, 5000],
+  textMode = false,
+  onTextNoteClick,
   frameDuration,
   onViewScroll,
   onSeek,
@@ -58,6 +64,9 @@ const PitchVisualizer: React.FC<PitchVisualizerProps> = ({
   onNotePitchChange,
   onPitchDragEnd
 }) => {
+  // Set the visible frequency range before anything is drawn / hit-tested
+  setFreqViewRange(freqRange[0], freqRange[1]);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -87,7 +96,7 @@ const PitchVisualizer: React.FC<PitchVisualizerProps> = ({
   const initialNotePitchRef = useRef<number>(0);
 
   // Hover Info State
-  const [hoveredNoteInfo, setHoveredNoteInfo] = useState<{ onset: number, pitch: number } | null>(null);
+  const [hoveredNoteInfo, setHoveredNoteInfo] = useState<{ onset: number, pitch: number, text?: string } | null>(null);
 
   // Handle Scroll
   const handleScroll = () => {
@@ -137,6 +146,7 @@ const PitchVisualizer: React.FC<PitchVisualizerProps> = ({
 
   // Handle Double Click to Select Note
   const handleDoubleClick = (e: React.MouseEvent) => {
+    if (textMode) return;
     const { time, y } = getMouseInfo(e.clientX, e.clientY);
     const NOTE_HEIGHT = DIMENSIONS.noteInteractionHeight; 
 
@@ -159,6 +169,13 @@ const PitchVisualizer: React.FC<PitchVisualizerProps> = ({
     
     const { time: rawTime, y: mouseY } = getMouseInfo(e.clientX, e.clientY);
     dragStartRef.current = rawTime;
+
+    // Text entry mode: a click on a note selects it for text input
+    if (textMode && onTextNoteClick) {
+        const hit = notes.find(n => rawTime >= n.start && rawTime <= n.end &&
+            Math.abs(mouseY - freqToY(n.pitch, containerHeight)) < DIMENSIONS.noteInteractionHeight);
+        if (hit) { onTextNoteClick(hit.id); return; }
+    }
 
     let mode: InteractionMode = 'SELECTING';
     
@@ -225,7 +242,7 @@ const PitchVisualizer: React.FC<PitchVisualizerProps> = ({
             });
             
             if (hoveredNote) {
-                foundHoverNote = { onset: hoveredNote.start, pitch: hoveredNote.pitch };
+                foundHoverNote = { onset: hoveredNote.start, pitch: hoveredNote.pitch, text: hoveredNote.text };
             }
 
             // Check boundaries for cursor change
@@ -349,27 +366,33 @@ const PitchVisualizer: React.FC<PitchVisualizerProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    canvas.width = width;
-    canvas.height = containerHeight;
-
+    // The canvas only covers the visible part of the timeline (a canvas as wide as the whole
+    // timeline - duration * zoom - exceeds the browser's canvas size limit at high zoom and
+    // then stays blank). All draw functions use absolute x = time * zoom, so the context is
+    // shifted by the current scroll position.
     const visibleWidth = window.innerWidth;
+    canvas.width = visibleWidth;
+    canvas.height = containerHeight;
+    const scrollX = containerRef.current ? containerRef.current.scrollLeft : viewStartTime * zoom;
+    const viewStart = scrollX / zoom;
 
     // 1. Clear & Background
     ctx.fillStyle = COLORS.background;
-    ctx.fillRect(0, 0, width, containerHeight);
+    ctx.fillRect(0, 0, visibleWidth, containerHeight);
+    ctx.translate(-scrollX, 0);
 
     // 2. Spectrogram
     if (showSpectrogram) {
-        drawSpectrogram(ctx, spectrogramData, pitchData, viewStartTime, zoom, visibleWidth, containerHeight, duration, showPitch);
+        drawSpectrogram(ctx, spectrogramData, pitchData, viewStart, zoom, visibleWidth, containerHeight, duration, showPitch);
     }
     
     // 3. Selection (Background highlight)
     if (selectionRange) {
-        drawSelection(ctx, selectionRange, viewStartTime, zoom, visibleWidth, containerHeight);
+        drawSelection(ctx, selectionRange, viewStart, zoom, visibleWidth, containerHeight);
     }
 
     // 4. Grid
-    drawGrid(ctx, viewStartTime, zoom, visibleWidth, containerHeight);
+    drawGrid(ctx, viewStart, zoom, visibleWidth, containerHeight);
 
     // 5. Notes
     if (showNotes) {
@@ -379,20 +402,20 @@ const PitchVisualizer: React.FC<PitchVisualizerProps> = ({
             : notes;
 
         // Pass selected ID for highlighting
-        drawNotes(ctx, displayNotes, viewStartTime, zoom, visibleWidth, containerHeight, selectedNoteId);
+        drawNotes(ctx, displayNotes, viewStart, zoom, visibleWidth, containerHeight, selectedNoteId);
     }
 
     // 6. Candidates
     if (showCandidates && selectionRange && showPitch) {
-        drawCandidates(ctx, pitchData, viewStartTime, zoom, visibleWidth, containerHeight, selectionRange);
+        drawCandidates(ctx, pitchData, viewStart, zoom, visibleWidth, containerHeight, selectionRange);
     }
 
     // 7. Main Pitch
     if (showPitch) {
-        drawPitchCurve(ctx, pitchData, viewStartTime, zoom, visibleWidth, containerHeight);
+        drawPitchCurve(ctx, pitchData, viewStart, zoom, visibleWidth, containerHeight);
     }
     
-  }, [pitchData, notes, spectrogramData, showSpectrogram, width, zoom, containerHeight, selectionRange, showCandidates, viewStartTime, showPitch, showNotes, duration, draggedNoteState, selectedNoteId]);
+  }, [pitchData, notes, spectrogramData, showSpectrogram, width, zoom, containerHeight, selectionRange, showCandidates, viewStartTime, showPitch, showNotes, duration, draggedNoteState, selectedNoteId, freqRange[0], freqRange[1]]);
 
   return (
     <div className="flex-1 relative overflow-hidden bg-white">
@@ -408,13 +431,13 @@ const PitchVisualizer: React.FC<PitchVisualizerProps> = ({
             onDoubleClick={handleDoubleClick}
             onMouseLeave={() => { setInteractionMode('NONE'); setDraggedNoteState(null); draggedNoteRef.current = null; setHoveredNoteInfo(null); }}
         >
-        <canvas 
-            ref={canvasRef}
-            className="block"
-            width={width}
-            height={containerHeight}
-            style={{ width: width, height: containerHeight }}
-        />
+        <div style={{ width: width, height: containerHeight, position: 'relative' }}>
+            <canvas 
+                ref={canvasRef}
+                className="block"
+                style={{ position: 'sticky', left: 0, top: 0, height: containerHeight }}
+            />
+        </div>
         
         <div 
             className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-10 pointer-events-none opacity-80"
@@ -428,6 +451,7 @@ const PitchVisualizer: React.FC<PitchVisualizerProps> = ({
         {/* Hover Info Overlay - Now positioned relative to the Viewport Wrapper */}
         {hoveredNoteInfo && (
             <div className="absolute top-4 right-4 z-20 bg-black/70 text-white text-xs px-2 py-1 rounded shadow pointer-events-none font-mono">
+                {hoveredNoteInfo.text && <span className="mr-3 font-bold">{hoveredNoteInfo.text}</span>}
                 <span className="mr-3">Onset: {hoveredNoteInfo.onset.toFixed(3)}s</span>
                 <span>{hoveredNoteInfo.pitch.toFixed(1)}Hz ({hzToNoteName(hoveredNoteInfo.pitch)})</span>
             </div>
