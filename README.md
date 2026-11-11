@@ -11,6 +11,8 @@ TonyWeb is a modern browser port of the **Tony** software, designed for the scie
 
 ## Credits & Acknowledgements
 
+**TonyWeb+ is a fork of [TonyWeb](https://ppquadrat.github.io/TonyWeb/)** (web-based pitch analysis and note segmentation in the browser), on whose code base and user interface this project is built. Many thanks to the TonyWeb authors for making their work available. The additions in this fork (automatic note segmentation, note texts, headset audio, selectable time step, Kalman-filter pitch tracker, etc.) are described below.
+
 This project is a web implementation inspired by the original **Tony** software developed at Queen Mary University of London.
 
 *   **Original Software:** [Tony: Analysis of Song](https://code.soundsoftware.ac.uk/projects/tony)
@@ -35,6 +37,8 @@ This project is a web implementation inspired by the original **Tony** software 
 The black curve represents the fundamental frequency.
 *   **Visuals:** Toggle the Spectrogram, Pitch Curve, and Notes using the "Eye" icons in the Mixer (bottom).
 *   **Selection:** Click and drag on the main canvas to select a time region.
+*   **Step / Window:** Next to *Extract Pitch* you can choose the time step (128/256/512 samples) and the analysis window (1024/2048). Finer steps resolve fast ornaments better but take longer.
+*   **Method:** *pYIN* (default) or *Kalman (ECKF)*, a sample-by-sample Extended Complex Kalman Filter after Das, Smith & Chafe (JAES 2020). It is an independent, experimental implementation written from the paper; *Smooth* (5-8) controls how closely it follows fast changes (6 worked best on one test recording, 89 % agreement with a hand-corrected track within 100 cents).
 
 ### 3. Pitch Correction
 If the algorithm makes a mistake (e.g., octave error), you can correct it:

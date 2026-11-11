@@ -48,6 +48,14 @@ interface ControlsProps {
   onSplitNote: () => void;
   onMergeNotes: () => void;
   onCloseGaps: () => void;
+  pitchHop: number;
+  onPitchHopChange: (n: number) => void;
+  pitchWindow: number;
+  onPitchWindowChange: (n: number) => void;
+  pitchMethod: 'pyin' | 'eckf';
+  onPitchMethodChange: (m: 'pyin' | 'eckf') => void;
+  eckfC: number;
+  onEckfCChange: (n: number) => void;
   onAutoSegment: () => void;
   onStartTextEntry: () => void;
   textEntryActive?: boolean;
@@ -103,6 +111,14 @@ const Controls: React.FC<ControlsProps> = ({
   onSplitNote,
   onMergeNotes,
   onCloseGaps,
+  pitchHop,
+  onPitchHopChange,
+  pitchWindow,
+  onPitchWindowChange,
+  pitchMethod,
+  onPitchMethodChange,
+  eckfC,
+  onEckfCChange,
   onAutoSegment,
   onStartTextEntry,
   textEntryActive = false,
@@ -537,6 +553,40 @@ const Controls: React.FC<ControlsProps> = ({
             <Activity size={16} className={isAnalyzing || !fileName ? "text-gray-400" : "text-blue-600"} />
             {isAnalyzing ? "Analyzing..." : "Extract Pitch"}
         </button>
+        <label className="flex flex-col text-[10px] text-gray-500 leading-tight" title="Pitch tracking method. pYIN: standard. Kalman (ECKF): sample-by-sample filter after Das/Smith/Chafe 2020, smooth tracks, good for ornaments; experimental.">
+            Method
+            <select className="border border-gray-300 rounded px-1 py-0 text-xs text-gray-700 bg-white" value={pitchMethod} disabled={isAnalyzing}
+                onChange={(e) => onPitchMethodChange(e.target.value as 'pyin' | 'eckf')}>
+                <option value="pyin">pYIN</option>
+                <option value="eckf">Kalman (ECKF)</option>
+            </select>
+        </label>
+        {pitchMethod === 'eckf' && (
+        <label className="flex flex-col text-[10px] text-gray-500 leading-tight" title="Smoothing of the Kalman filter (process-noise constant c). Lower = follows fast changes, higher = smoother but lags. 6 worked best on a test recording.">
+            Smooth
+            <select className="border border-gray-300 rounded px-1 py-0 text-xs text-gray-700 bg-white" value={eckfC} disabled={isAnalyzing}
+                onChange={(e) => onEckfCChange(parseInt(e.target.value))}>
+                {[5, 6, 7, 8].map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+        </label>
+        )}
+        <label className="flex flex-col text-[10px] text-gray-500 leading-tight" title="Time step between pitch values. Finer steps resolve fast ornaments better but take longer (hop 128 is about 4x the work of 512) and give 4x as many frames.">
+            Step
+            <select className="border border-gray-300 rounded px-1 py-0 text-xs text-gray-700 bg-white" value={pitchHop} disabled={isAnalyzing}
+                onChange={(e) => onPitchHopChange(parseInt(e.target.value))}>
+                <option value={128}>128 (≈3 ms)</option>
+                <option value={256}>256 (≈6 ms)</option>
+                <option value={512}>512 (≈12 ms)</option>
+            </select>
+        </label>
+        <label className="flex flex-col text-[10px] text-gray-500 leading-tight" title="Analysis window of the pitch tracker. A shorter window follows fast pitch changes more closely, but lowest detectable pitch rises (1024: about 90 Hz at 44.1 kHz) and the track is less stable.">
+            Window
+            <select className="border border-gray-300 rounded px-1 py-0 text-xs text-gray-700 bg-white" value={pitchWindow} disabled={isAnalyzing}
+                onChange={(e) => onPitchWindowChange(parseInt(e.target.value))}>
+                <option value={1024}>1024 (≈23 ms)</option>
+                <option value={2048}>2048 (≈46 ms)</option>
+            </select>
+        </label>
       </div>
 
       <div className="flex items-center gap-2">

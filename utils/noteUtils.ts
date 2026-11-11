@@ -3,9 +3,24 @@ import { Note, PitchFrame } from "../types";
 import { YIN_HOP_SIZE } from "../services/yin";
 
 // Snap time to nearest analysis frame
+// Hop (samples) of the pitch frames currently in use; set by the app whenever the pitch data change
+let snapHopSamples = YIN_HOP_SIZE;
+export const setSnapHop = (hopSamples: number) => { if (hopSamples > 0) snapHopSamples = hopSamples; };
+
+// Hop (samples) of a pitch track, estimated from its time stamps (median spacing)
+export const estimateHopSamples = (frames: { timestamp: number }[], sampleRate: number): number => {
+    if (!sampleRate || frames.length < 3) return YIN_HOP_SIZE;
+    const diffs: number[] = [];
+    const n = Math.min(frames.length - 1, 2000);
+    for (let i = 0; i < n; i++) { const d = frames[i + 1].timestamp - frames[i].timestamp; if (d > 0) diffs.push(d); }
+    if (diffs.length === 0) return YIN_HOP_SIZE;
+    diffs.sort((a, b) => a - b);
+    return Math.max(16, Math.round(diffs[diffs.length >> 1] * sampleRate));
+};
+
 export const snapTime = (time: number, sampleRate: number): number => {
     if (!sampleRate) return time;
-    const frameDur = YIN_HOP_SIZE / sampleRate;
+    const frameDur = snapHopSamples / sampleRate;
     return Math.round(time / frameDur) * frameDur;
 };
 

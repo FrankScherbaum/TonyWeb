@@ -1,11 +1,12 @@
 
-import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+import { useState, useEffect, useCallback, useRef, useLayoutEffect, useMemo } from 'react';
 import Controls from './components/Controls';
 import WaveformNavigator from './components/WaveformNavigator';
 import PitchVisualizer from './components/PitchVisualizer';
 import Mixer from './components/Mixer';
 import { audioService } from './services/audioService';
-import { extractPitch, YIN_HOP_SIZE } from './services/yin';
+import { extractPitch, YIN_HOP_SIZE, YIN_WINDOW_SIZE } from './services/yin';
+import { extractPitchEckf } from './services/eckfPitch';
 import { generateSpectrogram } from './services/spectrogram';
 import { segmentNotes, DEFAULT_SEGMENTATION_PARAMS } from './services/noteSegmentation';
 import { segmentStableRegions, DEFAULT_STABLE_REGION_PARAMS } from './services/stableRegionSegmentation';
@@ -13,7 +14,7 @@ import { generateProjectJSON, generatePitchCSV, generateNotesCSV, generateNotesT
 import { MixerState, PitchFrame, Note, SpectrogramData, AudioSource } from './types';
 import { useUndoRedo } from './hooks/useUndoRedo';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import { calculateMedianPitch, snapTime, splitNote, resizeNoteWithPush, mergeNotes, inheritNoteTexts, closeNoteGaps } from './utils/noteUtils';
+import { calculateMedianPitch, snapTime, splitNote, resizeNoteWithPush, mergeNotes, inheritNoteTexts, closeNoteGaps, setSnapHop, estimateHopSamples } from './utils/noteUtils';
 import { suggestNoteTexts } from './utils/textSuggest';
 import { freqToY } from './utils/renderUtils';
 import { snapPitchFrames, DEFAULT_SNAP_PARAMS } from './services/spectralSnap';
@@ -104,6 +105,11 @@ function App() {
   const [pendingProjectData, setPendingProjectData] = useState<any | null>(null);
   const [projectHandle, setProjectHandle] = useState<any | null>(null);
   const [restoreOffer, setRestoreOffer] = useState<{ data: any; savedAt: number } | null>(null);
+  // Pitch tracker settings: time step (hop) and analysis window in samples
+  const [pitchHop, setPitchHop] = useState(YIN_HOP_SIZE);
+  const [pitchWindow, setPitchWindow] = useState(YIN_WINDOW_SIZE);
+  const [pitchMethod, setPitchMethod] = useState<'pyin' | 'eckf'>('pyin');
+  const [eckfC, setEckfC] = useState(6);
   
   const animationFrameRef = useRef<number | null>(null);
   const fileLocateInputRef = useRef<HTMLInputElement>(null);
@@ -219,13 +225,22 @@ function App() {
 
   // --- Logic Handlers ---
 
+  // Time step (samples) of the pitch track currently loaded - used for snapping and the frame grid
+  const dataHop = useMemo(
+    () => (audioBuffer ? estimateHopSamples(analysis.pitchData, audioBuffer.sampleRate) : YIN_HOP_SIZE),
+    [analysis.pitchData, audioBuffer]
+  );
+  useEffect(() => { setSnapHop(dataHop); }, [dataHop]);
+
   const runPitchAnalysis = async (buffer: AudioBuffer) => {
     setAnalysisStatus({ isAnalyzing: true, progress: 0 });
     try {
       const channelData = buffer.getChannelData(0);
-      const frames = await extractPitch(channelData, buffer.sampleRate, (p) => {
-        setAnalysisStatus(prev => ({ ...prev, progress: p }));
-      });
+      const onProg = (p: number) => setAnalysisStatus(prev => ({ ...prev, progress: p }));
+      const frames = pitchMethod === 'eckf'
+        ? await extractPitchEckf(channelData, buffer.sampleRate, onProg, { hopSize: pitchHop, blockSize: pitchWindow, c: eckfC })
+        : await extractPitch(channelData, buffer.sampleRate, onProg, { hopSize: pitchHop, windowSize: pitchWindow });
+      setSnapHop(pitchHop);
       setAnalysisStatus({ isAnalyzing: false, progress: 1 });
       resetHistory({ pitchData: frames, notes: [] });
 
@@ -480,7 +495,7 @@ function App() {
         const { slice, offset } = result;
         const sr = audioBuffer.sampleRate;
         
-        const newFrames = await extractPitch(slice, sr, () => {}, { threshold: 0.95, rmsThreshold: 0 });
+        const newFrames = await extractPitch(slice, sr, () => {}, { threshold: 0.95, rmsThreshold: 0, hopSize: dataHop, windowSize: pitchWindow });
 
         if (!newFrames || newFrames.length === 0) {
             setIsRecalculating(false);
@@ -645,6 +660,7 @@ function App() {
   // --- Load / Import ---
   const applyProjectData = useCallback((data: any, buffer: AudioBuffer) => {
     const sr = buffer.sampleRate;
+    setSnapHop(estimateHopSamples(data.pitchData, sr));
     const snappedPitch = data.pitchData.map((f: PitchFrame) => ({...f, timestamp: snapTime(f.timestamp, sr)}));
     const snappedNotes = data.notes.map((n: Note) => ({...n, start: snapTime(n.start, sr), end: snapTime(n.end, sr)}));
     resetHistory({ pitchData: snappedPitch, notes: snappedNotes });
@@ -682,6 +698,7 @@ function App() {
     let frames = parseCSV(await file.text(), 'pitch');
     if (frames.length > 0 && audioBuffer) {
         const sr = audioBuffer.sampleRate;
+        setSnapHop(estimateHopSamples(frames, sr)); // the imported track may have its own time step
         frames = frames.map((f: any) => ({...f, timestamp: snapTime(f.timestamp, sr)}));
     }
     if (frames.length > 0) commitHistory({ ...analysis, pitchData: frames });
@@ -1169,6 +1186,8 @@ function App() {
         onLoadTextAudio={handleLoadTextAudio} textAudioName={textAudio?.name ?? null}
         onExportNotesTSV={handleExportNotesTSV}
         segParams={segParams} onSegParamsChange={setSegParams}
+        pitchHop={pitchHop} onPitchHopChange={setPitchHop} pitchWindow={pitchWindow} onPitchWindowChange={setPitchWindow}
+        pitchMethod={pitchMethod} onPitchMethodChange={setPitchMethod} eckfC={eckfC} onEckfCChange={setEckfC}
         canUndo={canUndo} canRedo={canRedo} onUndo={undo} onRedo={redo}
       />
 
@@ -1332,7 +1351,7 @@ function App() {
           containerHeight={window.innerHeight - 64 - 64 - 56} 
           viewStartTime={viewStartTime} selectionRange={selectionRange}
           textMode={textEntryActive} onTextNoteClick={handleTextNoteClick}
-          showCandidates={showCandidates} freqRange={freqRange} frameDuration={audioBuffer ? YIN_HOP_SIZE / audioBuffer.sampleRate : 0}
+          showCandidates={showCandidates} freqRange={freqRange} frameDuration={audioBuffer ? dataHop / audioBuffer.sampleRate : 0}
           onViewScroll={setViewStartTime} onSeek={handleSeek} onZoomWheel={handleZoomWheel}
           onSelectionChange={handleSelectionChange} onNoteResize={handleNoteResize}
           // New Props

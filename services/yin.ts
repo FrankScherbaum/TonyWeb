@@ -2,11 +2,16 @@
 
 import { PitchFrame } from '../types';
 
-export const YIN_HOP_SIZE = 512; // Standard hop size for pYIN
+export const YIN_HOP_SIZE = 512; // Standard hop size for pYIN (samples)
+export const YIN_WINDOW_SIZE = 2048; // Standard analysis window (samples)
 
 export interface PyinParams {
   threshold?: number;
   rmsThreshold?: number;
+  /** Time step between analysis frames in samples (default 512 = 11.6 ms at 44.1 kHz) */
+  hopSize?: number;
+  /** Analysis window in samples (default 2048). Smaller = better time resolution, but the lowest detectable f0 rises (sampleRate / (window/2)). */
+  windowSize?: number;
 }
 
 /**
@@ -78,9 +83,11 @@ function pYinWorkerCode() {
 
   function runPyin(data: Float32Array, sampleRate: number, params: any) {
     // pYIN Configuration
-    const bufferSize = 2048;
-    const overlap = 1536; 
-    const step = bufferSize - overlap; // Should match YIN_HOP_SIZE (512)
+    const bufferSize = params.windowSize !== undefined ? Math.max(256, Math.round(params.windowSize)) : 2048;
+    const step = Math.max(32, Math.min(bufferSize, Math.round(params.hopSize !== undefined ? params.hopSize : 512)));
+    // The Viterbi costs below were tuned for hop 512; with a finer time step there are more
+    // frames per second, so the transition costs are scaled up to keep the balance.
+    const hopScale = 512 / step;
     const minFreq = 60;   
     const maxFreq = 1200; 
     
@@ -92,8 +99,8 @@ function pYinWorkerCode() {
     const isDeepSearch = threshold > 0.8;
 
     // Viterbi Costs
-    const transitionCostWeight = 1.0; 
-    const voicingTransitionCost = 1.5;
+    const transitionCostWeight = 1.0 * hopScale; 
+    const voicingTransitionCost = 1.5 * hopScale;
     
     const totalSamples = data.length;
     
@@ -101,7 +108,7 @@ function pYinWorkerCode() {
     const numFrames = Math.floor((totalSamples - bufferSize) / step);
     
     const minPeriod = Math.floor(sampleRate / maxFreq);
-    const maxPeriod = Math.floor(sampleRate / minFreq);
+    const maxPeriod = Math.min(Math.floor(sampleRate / minFreq), Math.floor(bufferSize / 2) - 2);
 
     const allCandidates: Candidate[][] = [];
 
@@ -285,7 +292,7 @@ function pYinWorkerCode() {
     const cleanedResults = [...rawResults];
 
     if (runDespeckling) {
-        const minDurationFrames = 8;
+        const minDurationFrames = Math.max(1, Math.round(8 * hopScale)); // 8 frames at hop 512
         let runStart = -1;
 
         for(let i = 0; i < cleanedResults.length; i++) {
