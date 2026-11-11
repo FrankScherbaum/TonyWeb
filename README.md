@@ -20,6 +20,7 @@ This project is a web implementation inspired by the original **Tony** software 
 *   **Core Algorithm:** This app implements the **pYIN** algorithm (Probabilistic YIN) for pitch tracking.
     *   *Reference:* Mauch, M., & Dixon, S. (2014). pYIN: A Fundamental Frequency Estimator Using Probabilistic Threshold Distributions. *ICASSP*.
 *   **Special Thanks:** To **Chris Cannam** (Centre for Digital Music, QMUL), whose work on Tony and Sonic Visualiser set the standard for audio analysis tools.
+*   **Special Thanks:** To **Polina Proutskova**, who encouraged me to give VibeCoding a go for this project.
 
 ---
 
